@@ -55,7 +55,7 @@ export function TabBar() {
               <span className={`${styles.tabTitle} ${isSaved ? styles.savedFlash : ''}`}>
                 {getTabTitle(tab)}
               </span>
-              {(tab.type === 'file' && tab.unsaved) || (tab.type === 'diff' && tab.unsavedFiles?.length) ? (
+              {tab.type === 'file' && tab.unsaved ? (
                 <span className={styles.unsavedDot} />
               ) : (
                 <Tooltip label="Close tab" shortcut="⌘W">

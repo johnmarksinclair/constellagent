@@ -155,9 +155,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (tab.type === 'file' && tab.unsaved && s.settings.confirmOnClose) {
       if (!window.confirm('This file has unsaved changes. Close anyway?')) return
     }
-    if (tab.type === 'diff' && tab.unsavedFiles?.length && s.settings.confirmOnClose) {
-      if (!window.confirm(`${tab.unsavedFiles.length} file(s) have unsaved changes in diff view. Close anyway?`)) return
-    }
     if (tab.type === 'terminal') {
       window.api.pty.destroy(tab.ptyId)
     }
@@ -368,18 +365,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       type: 'diff',
     })
   },
-
-  setDiffFileUnsaved: (tabId, filePath, unsaved) =>
-    set((s) => ({
-      tabs: s.tabs.map((t) => {
-        if (t.id !== tabId || t.type !== 'diff') return t
-        const current = t.unsavedFiles ?? []
-        const next = unsaved
-          ? current.includes(filePath) ? current : [...current, filePath]
-          : current.filter((p) => p !== filePath)
-        return { ...t, unsavedFiles: next.length > 0 ? next : undefined }
-      }),
-    })),
 
   hydrateState: (data) => {
     const workspaces = data.workspaces ?? []

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, memo } from 'react'
-import { DiffEditor as MonacoDiffEditor } from '@monaco-editor/react'
+import { PatchDiff } from '@pierre/diffs/react'
 import { useAppStore } from '../../store/app-store'
 import styles from './Editor.module.css'
 
@@ -11,13 +11,11 @@ interface FileStatus {
 
 interface DiffFileData {
   filePath: string
-  original: string
-  modified: string
+  patch: string
   status: string
 }
 
 interface Props {
-  tabId: string
   worktreePath: string
   active: boolean
 }
@@ -30,165 +28,35 @@ const STATUS_LABELS: Record<string, string> = {
   untracked: 'U',
 }
 
-function getLanguage(path: string): string {
-  const ext = path.split('.').pop()?.toLowerCase()
-  const map: Record<string, string> = {
-    ts: 'typescript', tsx: 'typescriptreact',
-    js: 'javascript', jsx: 'javascriptreact',
-    json: 'json', md: 'markdown', css: 'css',
-    html: 'html', py: 'python', rs: 'rust', go: 'go',
-  }
-  return map[ext || ''] || 'plaintext'
-}
-
-/**
- * Reconstruct original file from current content + unified diff.
- */
-function reconstructOriginal(current: string, diffText: string): string {
-  const lines = current.split('\n')
-  const diffLines = diffText.split('\n')
-  const result: string[] = []
-
-  let currentLineIdx = 0
-  let i = 0
-
-  while (i < diffLines.length && !diffLines[i].startsWith('@@')) i++
-  if (i >= diffLines.length) return current
-
-  while (i < diffLines.length) {
-    const line = diffLines[i]
-
-    if (line.startsWith('@@')) {
-      const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/)
-      if (match) {
-        const newStart = parseInt(match[2], 10) - 1
-        while (currentLineIdx < newStart && currentLineIdx < lines.length) {
-          result.push(lines[currentLineIdx])
-          currentLineIdx++
-        }
-      }
-      i++
-      continue
-    }
-
-    if (line.startsWith('+') && !line.startsWith('+++')) {
-      currentLineIdx++
-      i++
-      continue
-    }
-
-    if (line.startsWith('-') && !line.startsWith('---')) {
-      result.push(line.slice(1))
-      i++
-      continue
-    }
-
-    if (line.startsWith(' ')) {
-      result.push(lines[currentLineIdx])
-      currentLineIdx++
-      i++
-      continue
-    }
-
-    i++
-  }
-
-  while (currentLineIdx < lines.length) {
-    result.push(lines[currentLineIdx])
-    currentLineIdx++
-  }
-
-  return result.join('\n')
-}
-
 // ── Per-file diff section ──
 
 interface DiffFileSectionProps {
   data: DiffFileData
   inline: boolean
   worktreePath: string
-  tabId: string
+  onOpenFile: (filePath: string) => void
 }
 
 const DiffFileSection = memo(function DiffFileSection({
   data,
   inline,
   worktreePath,
-  tabId,
+  onOpenFile,
 }: DiffFileSectionProps) {
-  const [height, setHeight] = useState(200)
-  const editorRef = useRef<any>(null)
-  const initialModified = useRef(data.modified)
-  const [unsaved, setUnsaved] = useState(false)
-  const [currentOriginal, setCurrentOriginal] = useState(data.original)
-  const { setDiffFileUnsaved, notifyTabSaved, settings: { editorFontSize } } = useAppStore()
-
-  // Update original if parent re-fetches (but only if we haven't edited)
-  useEffect(() => {
-    if (!unsaved) {
-      setCurrentOriginal(data.original)
-      initialModified.current = data.modified
-    }
-  }, [data.original, data.modified, unsaved])
-
-  const handleMount = useCallback(
-    (editor: any) => {
-      editorRef.current = editor
-      const modifiedEditor = editor.getModifiedEditor()
-      const originalEditor = editor.getOriginalEditor()
-
-      const updateHeight = () => {
-        const modH = modifiedEditor.getContentHeight()
-        const origH = originalEditor.getContentHeight()
-        // Size to full content — no cap. Outer container scrolls.
-        setHeight(Math.max(modH, origH, 60))
-      }
-      updateHeight()
-      modifiedEditor.onDidContentSizeChange(updateHeight)
-      originalEditor.onDidContentSizeChange(updateHeight)
-
-      // Track unsaved state
-      modifiedEditor.onDidChangeModelContent(() => {
-        const current = modifiedEditor.getValue()
-        const isDirty = current !== initialModified.current
-        setUnsaved(isDirty)
-        setDiffFileUnsaved(tabId, data.filePath, isDirty)
-      })
-
-      // Cmd+S save handler
-      // eslint-disable-next-line no-bitwise
-      modifiedEditor.addCommand(2048 | 49, async () => {
-        const content = modifiedEditor.getValue()
-        const fullPath = data.filePath.startsWith('/')
-          ? data.filePath
-          : `${worktreePath}/${data.filePath}`
-        try {
-          await window.api.fs.writeFile(fullPath, content)
-          initialModified.current = content
-
-          // Re-fetch diff to update original side
-          const diffText = await window.api.git.getFileDiff(worktreePath, data.filePath)
-          const newOriginal = diffText ? reconstructOriginal(content, diffText) : content
-          setCurrentOriginal(newOriginal)
-
-          setUnsaved(false)
-          setDiffFileUnsaved(tabId, data.filePath, false)
-          notifyTabSaved(tabId)
-        } catch (err) {
-          console.error('Failed to save from diff view:', err)
-        }
-      })
-    },
-    [data.filePath, worktreePath, tabId, setDiffFileUnsaved, notifyTabSaved],
-  )
-
   const parts = data.filePath.split('/')
   const fileName = parts.pop()
   const dir = parts.length > 0 ? parts.join('/') + '/' : ''
 
+  const fullPath = data.filePath.startsWith('/')
+    ? data.filePath
+    : `${worktreePath}/${data.filePath}`
+
   return (
     <div className={styles.diffFileSection} id={`diff-${data.filePath}`}>
-      <div className={styles.fileHeader}>
+      <div
+        className={styles.fileHeader}
+        onClick={() => onOpenFile(fullPath)}
+      >
         <span className={`${styles.fileHeaderBadge} ${styles[data.status] || ''}`}>
           {STATUS_LABELS[data.status] || '?'}
         </span>
@@ -196,40 +64,20 @@ const DiffFileSection = memo(function DiffFileSection({
           {dir && <span className={styles.fileHeaderDir}>{dir}</span>}
           {fileName}
         </span>
-        {unsaved && <span className={styles.fileHeaderUnsaved} />}
       </div>
-      <div style={{ height }}>
-        <MonacoDiffEditor
-          key={inline ? 'inline' : 'sbs'}
-          height="100%"
-          language={getLanguage(data.filePath)}
-          original={currentOriginal}
-          modified={data.modified}
-          theme="vs-dark"
-          onMount={handleMount}
-          options={{
-            fontFamily: "'SF Mono', Menlo, 'Cascadia Code', monospace",
-            fontSize: editorFontSize,
-            lineHeight: 20,
-            minimap: { enabled: false },
-            scrollbar: {
-              vertical: 'hidden',
-              horizontal: 'auto',
-              alwaysConsumeMouseWheel: false,
-              verticalScrollbarSize: 0,
-            },
-            readOnly: false,
-            originalEditable: false,
-            renderSideBySide: !inline,
-            useInlineViewWhenSpaceIsLimited: false,
-            renderOverviewRuler: false,
-            overviewRulerBorder: false,
-            overviewRulerLanes: 0,
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-          }}
-        />
-      </div>
+      <PatchDiff
+        patch={data.patch}
+        options={{
+          theme: 'tokyo-night',
+          themeType: 'dark',
+          diffStyle: inline ? 'unified' : 'split',
+          diffIndicators: 'bars',
+          lineDiffType: 'word-alt',
+          overflow: 'scroll',
+          expandUnchanged: false,
+          disableFileHeader: true,
+        }}
+      />
     </div>
   )
 })
@@ -265,12 +113,12 @@ function FileStrip({
 
 // ── Main DiffViewer ──
 
-export function DiffViewer({ tabId, worktreePath, active }: Props) {
+export function DiffViewer({ worktreePath, active }: Props) {
   const [files, setFiles] = useState<DiffFileData[]>([])
   const [loading, setLoading] = useState(true)
   const [activeFile, setActiveFile] = useState<string | null>(null)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const { settings, updateSettings } = useAppStore()
+  const { settings, updateSettings, openFileTab } = useAppStore()
   const inline = settings.diffInline
 
   // Load all changed files
@@ -279,19 +127,29 @@ export function DiffViewer({ tabId, worktreePath, active }: Props) {
       const statuses: FileStatus[] = await window.api.git.getStatus(worktreePath)
       const results = await Promise.all(
         statuses.map(async (file) => {
-          const fullPath = file.path.startsWith('/')
-            ? file.path
-            : `${worktreePath}/${file.path}`
-          const current =
-            file.status === 'deleted' ? '' : await window.api.fs.readFile(fullPath)
-          const diffText = await window.api.git.getFileDiff(worktreePath, file.path)
-          const original = diffText ? reconstructOriginal(current, diffText) : ''
-          return {
-            filePath: file.path,
-            original,
-            modified: current,
-            status: file.status,
+          let patch = await window.api.git.getFileDiff(worktreePath, file.path)
+
+          // For added/untracked files, git diff returns empty — build synthetic patch
+          if (!patch && (file.status === 'added' || file.status === 'untracked')) {
+            const fullPath = file.path.startsWith('/')
+              ? file.path
+              : `${worktreePath}/${file.path}`
+            const content = await window.api.fs.readFile(fullPath)
+            const lines = content.split('\n')
+            patch = [
+              `--- /dev/null`,
+              `+++ b/${file.path}`,
+              `@@ -0,0 +1,${lines.length} @@`,
+              ...lines.map((l: string) => `+${l}`),
+            ].join('\n')
           }
+
+          // For deleted files with no diff, build synthetic removal patch
+          if (!patch && file.status === 'deleted') {
+            patch = `--- a/${file.path}\n+++ /dev/null\n@@ -1,0 +0,0 @@\n`
+          }
+
+          return { filePath: file.path, patch: patch || '', status: file.status }
         }),
       )
       setFiles(results)
@@ -372,7 +230,7 @@ export function DiffViewer({ tabId, worktreePath, active }: Props) {
     return (
       <div className={styles.diffViewerContainer}>
         <div className={styles.diffEmpty}>
-          <span className={styles.diffEmptyIcon}>✓</span>
+          <span className={styles.diffEmptyIcon}>&#10003;</span>
           <span className={styles.diffEmptyText}>No changes</span>
         </div>
       </div>
@@ -413,7 +271,7 @@ export function DiffViewer({ tabId, worktreePath, active }: Props) {
             data={f}
             inline={inline}
             worktreePath={worktreePath}
-            tabId={tabId}
+            onOpenFile={openFileTab}
           />
         ))}
       </div>

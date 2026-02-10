@@ -1,4 +1,4 @@
-/* Editor + Diff viewer — Monaco wrapper styles */
+/* Editor — Monaco wrapper styles */
 
 .editorContainer {
   position: absolute;
@@ -86,11 +86,6 @@
   flex-direction: column;
 }
 
-.diffViewerContainer :global(.monaco-editor) {
-  --vscode-editor-background: var(--surface-1);
-  --vscode-editorGutter-background: var(--surface-0);
-}
-
 .diffScrollArea {
   flex: 1;
   overflow-y: auto;
@@ -148,6 +143,12 @@
   position: sticky;
   top: 0;
   z-index: 2;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.fileHeader:hover {
+  background: var(--surface-3);
 }
 
 .fileHeaderPath {
@@ -174,14 +175,6 @@
 .fileHeaderBadge.deleted { color: var(--accent-red); }
 .fileHeaderBadge.renamed { color: var(--accent-cyan); }
 .fileHeaderBadge.untracked { color: var(--text-tertiary); }
-
-.fileHeaderUnsaved {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-blue);
-  flex-shrink: 0;
-}
 
 /* Empty diff state */
 .diffEmpty {

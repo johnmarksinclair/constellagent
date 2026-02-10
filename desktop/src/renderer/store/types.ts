@@ -37,7 +37,7 @@ export type Tab = {
 } & (
   | { type: 'terminal'; title: string; ptyId: string }
   | { type: 'file'; filePath: string; unsaved?: boolean }
-  | { type: 'diff'; unsavedFiles?: string[] }
+  | { type: 'diff' }
 )
 
 export type RightPanelMode = 'files' | 'changes'
@@ -118,7 +118,6 @@ export interface AppState {
   notifyTabSaved: (tabId: string) => void
   openFileTab: (filePath: string) => void
   openDiffTab: (workspaceId: string) => void
-  setDiffFileUnsaved: (tabId: string, filePath: string, unsaved: boolean) => void
   nextWorkspace: () => void
   prevWorkspace: () => void
   switchToTabByIndex: (index: number) => void

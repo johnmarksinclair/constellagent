@@ -113,7 +113,6 @@ export function App() {
                       {activeTab?.type === 'diff' && workspace && (
                         <DiffViewer
                           key={activeTab.id}
-                          tabId={activeTab.id}
                           worktreePath={workspace.worktreePath}
                           active={true}
                         />
