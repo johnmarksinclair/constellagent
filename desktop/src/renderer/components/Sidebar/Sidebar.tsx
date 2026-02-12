@@ -1,6 +1,7 @@
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "../../store/app-store";
 import type { Project } from "../../store/types";
+import type { CreateWorktreeProgressEvent } from "../../../shared/workspace-creation";
 import { WorkspaceDialog } from "./WorkspaceDialog";
 import { ProjectSettingsDialog } from "./ProjectSettingsDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -8,6 +9,12 @@ import { Tooltip } from "../Tooltip/Tooltip";
 import styles from "./Sidebar.module.css";
 
 const PR_ICON_SIZE = 10;
+const START_TERMINAL_MESSAGE = "Starting terminal...";
+
+interface WorkspaceCreationState {
+  requestId: string;
+  message: string;
+}
 
 function PrStateIcon({ state }: { state: "open" | "merged" | "closed" }) {
   if (state === "open") {
@@ -113,10 +120,38 @@ export function Sidebar() {
   const [editingWorkspaceId, setEditingWorkspaceId] = useState<string | null>(
     null,
   );
+  const [workspaceCreation, setWorkspaceCreation] =
+    useState<WorkspaceCreationState | null>(null);
+  const [showSlowCreateMessage, setShowSlowCreateMessage] = useState(false);
   const editRef = useRef<string>("");
   const dialogProject = workspaceDialogProjectId
     ? (projects.find((p) => p.id === workspaceDialogProjectId) ?? null)
     : null;
+  const isCreatingWorkspace = workspaceCreation !== null;
+
+  useEffect(() => {
+    const unsub = window.api.git.onCreateWorktreeProgress(
+      (progress: CreateWorktreeProgressEvent) => {
+        if (!progress.requestId) return;
+        setWorkspaceCreation((prev) => {
+          if (!prev || prev.requestId !== progress.requestId) return prev;
+          return { ...prev, message: progress.message };
+        });
+      },
+    );
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceCreation) {
+      setShowSlowCreateMessage(false);
+      return;
+    }
+
+    setShowSlowCreateMessage(false);
+    const timer = setTimeout(() => setShowSlowCreateMessage(true), 5000);
+    return () => clearTimeout(timer);
+  }, [workspaceCreation?.requestId]);
 
   const isProjectExpanded = useCallback(
     (id: string) => {
@@ -214,6 +249,13 @@ export function Sidebar() {
       force = false,
       baseBranch?: string,
     ) => {
+      if (workspaceCreation) return;
+      const requestId = crypto.randomUUID();
+      setWorkspaceCreation({
+        requestId,
+        message: "Syncing remote...",
+      });
+
       try {
         const worktreePath = await window.api.git.createWorktree(
           project.repoPath,
@@ -222,8 +264,14 @@ export function Sidebar() {
           newBranch,
           baseBranch,
           force,
+          requestId,
         );
+        setWorkspaceCreation((prev) => {
+          if (!prev || prev.requestId !== requestId) return prev;
+          return { ...prev, message: START_TERMINAL_MESSAGE };
+        });
         await finishCreateWorkspace(project, name, branch, worktreePath);
+        openWorkspaceDialog(null);
       } catch (err) {
         const msg =
           err instanceof Error ? err.message : "Failed to create workspace";
@@ -253,9 +301,21 @@ export function Sidebar() {
           return;
         }
         addToast({ id: crypto.randomUUID(), message: msg, type: "error" });
+      } finally {
+        setWorkspaceCreation((prev) => {
+          if (!prev || prev.requestId !== requestId) return prev;
+          return null;
+        });
       }
     },
-    [finishCreateWorkspace, addToast, showConfirmDialog, dismissConfirmDialog],
+    [
+      workspaceCreation,
+      finishCreateWorkspace,
+      addToast,
+      showConfirmDialog,
+      dismissConfirmDialog,
+      openWorkspaceDialog,
+    ],
   );
 
   const handleSelectWorkspace = useCallback(
@@ -483,10 +543,21 @@ export function Sidebar() {
         <WorkspaceDialog
           project={dialogProject}
           onConfirm={(name, branch, newBranch, baseBranch) => {
-            handleCreateWorkspace(dialogProject, name, branch, newBranch, false, baseBranch);
-            openWorkspaceDialog(null);
+            handleCreateWorkspace(
+              dialogProject,
+              name,
+              branch,
+              newBranch,
+              false,
+              baseBranch,
+            );
           }}
-          onCancel={() => openWorkspaceDialog(null)}
+          onCancel={() => {
+            if (!isCreatingWorkspace) openWorkspaceDialog(null);
+          }}
+          isCreating={isCreatingWorkspace}
+          createProgressMessage={workspaceCreation?.message}
+          showSlowCreateMessage={showSlowCreateMessage}
         />
       )}
 

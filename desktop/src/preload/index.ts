@@ -1,12 +1,20 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/ipc-channels'
+import type { CreateWorktreeProgressEvent } from '../shared/workspace-creation'
 
 const api = {
   git: {
     listWorktrees: (repoPath: string) =>
       ipcRenderer.invoke(IPC.GIT_LIST_WORKTREES, repoPath),
-    createWorktree: (repoPath: string, name: string, branch: string, newBranch: boolean, baseBranch?: string, force?: boolean) =>
-      ipcRenderer.invoke(IPC.GIT_CREATE_WORKTREE, repoPath, name, branch, newBranch, baseBranch, force),
+    createWorktree: (repoPath: string, name: string, branch: string, newBranch: boolean, baseBranch?: string, force?: boolean, requestId?: string) =>
+      ipcRenderer.invoke(IPC.GIT_CREATE_WORKTREE, repoPath, name, branch, newBranch, baseBranch, force, requestId),
+    onCreateWorktreeProgress: (callback: (progress: CreateWorktreeProgressEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: CreateWorktreeProgressEvent) => callback(progress)
+      ipcRenderer.on(IPC.GIT_CREATE_WORKTREE_PROGRESS, listener)
+      return () => {
+        ipcRenderer.removeListener(IPC.GIT_CREATE_WORKTREE_PROGRESS, listener)
+      }
+    },
     removeWorktree: (repoPath: string, worktreePath: string) =>
       ipcRenderer.invoke(IPC.GIT_REMOVE_WORKTREE, repoPath, worktreePath),
     getStatus: (worktreePath: string) =>

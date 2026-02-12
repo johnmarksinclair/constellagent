@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { watch, type FSWatcher } from 'fs'
 import { IPC } from '../shared/ipc-channels'
+import type { CreateWorktreeProgressEvent } from '../shared/workspace-creation'
 import { PtyManager } from './pty-manager'
 import { GitService } from './git-service'
 import { GithubService } from './github-service'
@@ -24,8 +25,19 @@ export function registerIpcHandlers(): void {
     return GitService.listWorktrees(repoPath)
   })
 
-  ipcMain.handle(IPC.GIT_CREATE_WORKTREE, async (_e, repoPath: string, name: string, branch: string, newBranch: boolean, baseBranch?: string, force?: boolean) => {
-    return GitService.createWorktree(repoPath, name, branch, newBranch, baseBranch, force)
+  ipcMain.handle(IPC.GIT_CREATE_WORKTREE, async (_e, repoPath: string, name: string, branch: string, newBranch: boolean, baseBranch?: string, force?: boolean, requestId?: string) => {
+    return GitService.createWorktree(
+      repoPath,
+      name,
+      branch,
+      newBranch,
+      baseBranch,
+      force,
+      (progress) => {
+        const payload: CreateWorktreeProgressEvent = { requestId, ...progress }
+        _e.sender.send(IPC.GIT_CREATE_WORKTREE_PROGRESS, payload)
+      }
+    )
   })
 
   ipcMain.handle(IPC.GIT_REMOVE_WORKTREE, async (_e, repoPath: string, worktreePath: string) => {

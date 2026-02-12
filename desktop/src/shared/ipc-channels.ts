@@ -4,6 +4,7 @@ export const IPC = {
   // Git operations
   GIT_LIST_WORKTREES: 'git:list-worktrees',
   GIT_CREATE_WORKTREE: 'git:create-worktree',
+  GIT_CREATE_WORKTREE_PROGRESS: 'git:create-worktree-progress',
   GIT_REMOVE_WORKTREE: 'git:remove-worktree',
   GIT_GET_STATUS: 'git:get-status',
   GIT_GET_DIFF: 'git:get-diff',

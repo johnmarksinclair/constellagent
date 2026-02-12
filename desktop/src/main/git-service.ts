@@ -3,8 +3,11 @@ import { existsSync } from 'fs'
 import { copyFile, mkdir, readdir, rm } from 'fs/promises'
 import { promisify } from 'util'
 import { basename, dirname, join, resolve } from 'path'
+import type { CreateWorktreeProgress } from '../shared/workspace-creation'
 
 const execFileAsync = promisify(execFile)
+
+type CreateWorktreeProgressReporter = (progress: CreateWorktreeProgress) => void
 
 export interface WorktreeInfo {
   path: string
@@ -83,6 +86,13 @@ async function copyEnvFiles(dir: string, destRoot: string, srcRoot: string): Pro
   } catch {}
 }
 
+function reportCreateWorktreeProgress(
+  onProgress: CreateWorktreeProgressReporter | undefined,
+  progress: CreateWorktreeProgress
+): void {
+  onProgress?.(progress)
+}
+
 export class GitService {
   static async listWorktrees(repoPath: string): Promise<WorktreeInfo[]> {
     const output = await git(['worktree', 'list', '--porcelain'], repoPath)
@@ -136,7 +146,8 @@ export class GitService {
     branch: string,
     newBranch: boolean,
     baseBranch?: string,
-    force = false
+    force = false,
+    onProgress?: CreateWorktreeProgressReporter
   ): Promise<string> {
     branch = GitService.sanitizeBranchName(branch)
     if (!branch) throw new Error('Branch name is empty after sanitization')
@@ -146,16 +157,32 @@ export class GitService {
     const worktreePath = resolve(parentDir, `${repoName}-ws-${name}`)
 
     // Clean up stale worktree refs
+    reportCreateWorktreeProgress(onProgress, {
+      stage: 'prune-worktrees',
+      message: 'Cleaning stale worktree references...',
+    })
     await git(['worktree', 'prune'], repoPath).catch(() => {})
 
     // Fetch remote refs so worktree branches from latest state
+    reportCreateWorktreeProgress(onProgress, {
+      stage: 'fetch-origin',
+      message: 'Syncing remote...',
+    })
     await git(['fetch', '--prune', 'origin'], repoPath)
 
     // Auto-detect base branch when creating a new branch without explicit base
     if (newBranch && !baseBranch) {
+      reportCreateWorktreeProgress(onProgress, {
+        stage: 'resolve-default-branch',
+        message: 'Resolving default base branch...',
+      })
       baseBranch = await GitService.getDefaultBranch(repoPath)
     }
 
+    reportCreateWorktreeProgress(onProgress, {
+      stage: 'prepare-worktree-dir',
+      message: 'Preparing worktree directory...',
+    })
     if (existsSync(worktreePath)) {
       if (!force) {
         throw new Error('WORKTREE_PATH_EXISTS')
@@ -164,6 +191,10 @@ export class GitService {
     }
 
     // Pre-check if branch exists so we never need -b retry
+    reportCreateWorktreeProgress(onProgress, {
+      stage: 'inspect-branch',
+      message: 'Checking branch state...',
+    })
     const branchExists = await git(['rev-parse', '--verify', `refs/heads/${branch}`], repoPath)
       .then(() => true, () => false)
 
@@ -177,6 +208,10 @@ export class GitService {
     }
 
     try {
+      reportCreateWorktreeProgress(onProgress, {
+        stage: 'create-worktree',
+        message: 'Creating worktree...',
+      })
       await git(args, repoPath)
     } catch (err) {
       const msg = friendlyGitError(err, 'Failed to create worktree')
@@ -186,10 +221,18 @@ export class GitService {
 
     // Fast-forward existing branches to match upstream
     if (!newBranch || branchExists) {
+      reportCreateWorktreeProgress(onProgress, {
+        stage: 'sync-branch',
+        message: 'Fast-forwarding branch...',
+      })
       await git(['pull', '--ff-only'], worktreePath).catch(() => {})
     }
 
     // Copy .env files that are missing from the worktree (gitignored) from the main repo
+    reportCreateWorktreeProgress(onProgress, {
+      stage: 'copy-env-files',
+      message: 'Copying env files...',
+    })
     await copyEnvFiles(repoPath, worktreePath, repoPath)
 
     return worktreePath
