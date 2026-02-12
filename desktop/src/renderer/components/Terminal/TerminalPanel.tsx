@@ -11,7 +11,7 @@ export function TerminalPanel({ ptyId, active }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termDivRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<any>(null)
-  const fitAddonRef = useRef<any>(null)
+  const fitFnRef = useRef<(() => void) | null>(null)
   const [loading, setLoading] = useState(true)
   const terminalFontSize = useAppStore((s) => s.settings.terminalFontSize)
 
@@ -63,9 +63,6 @@ export function TerminalPanel({ ptyId, active }: Props) {
           },
         })
 
-        const fitAddon = new ghostty.FitAddon()
-        term.loadAddon(fitAddon)
-
         term.open(termDiv)
 
         if (disposed) {
@@ -73,12 +70,38 @@ export function TerminalPanel({ ptyId, active }: Props) {
           return
         }
 
+        // ghostty-web's FitAddon reserves 15px for a scrollbar, which creates
+        // a visible empty strip on the right edge in this layout. Fit using
+        // the real container width so the canvas reaches the pane divider.
+        const fitTerminal = () => {
+          const renderer = term.renderer
+          const metrics = renderer?.getMetrics?.()
+          if (!metrics?.width || !metrics?.height) return
+
+          const styles = window.getComputedStyle(termDiv)
+          const paddingTop = Number.parseInt(styles.getPropertyValue('padding-top'), 10) || 0
+          const paddingBottom = Number.parseInt(styles.getPropertyValue('padding-bottom'), 10) || 0
+          const paddingLeft = Number.parseInt(styles.getPropertyValue('padding-left'), 10) || 0
+          const paddingRight = Number.parseInt(styles.getPropertyValue('padding-right'), 10) || 0
+
+          const availableWidth = termDiv.clientWidth - paddingLeft - paddingRight
+          const availableHeight = termDiv.clientHeight - paddingTop - paddingBottom
+          if (availableWidth <= 0 || availableHeight <= 0) return
+
+          const cols = Math.max(2, Math.floor(availableWidth / metrics.width))
+          const rows = Math.max(1, Math.floor(availableHeight / metrics.height))
+          if (cols !== term.cols || rows !== term.rows) {
+            term.resize(cols, rows)
+          }
+        }
+        fitFnRef.current = fitTerminal
+
         // Defer fit until container has real dimensions
         let fitAttempts = 0
         function tryFit() {
           if (disposed) return
           if (termDiv.clientWidth > 0 && termDiv.clientHeight > 0) {
-            fitAddon.fit()
+            fitTerminal()
             setLoading(false)
           } else if (++fitAttempts < 30) {
             requestAnimationFrame(tryFit)
@@ -96,7 +119,7 @@ export function TerminalPanel({ ptyId, active }: Props) {
         const resizeObserver = new ResizeObserver(() => {
           clearTimeout(resizeTimer)
           resizeTimer = setTimeout(() => {
-            if (!disposed) fitAddon.fit()
+            if (!disposed) fitTerminal()
           }, 150)
         })
         resizeObserver.observe(termDiv)
@@ -106,7 +129,7 @@ export function TerminalPanel({ ptyId, active }: Props) {
         // (font not measured, canvas not initialized). The ResizeObserver
         // won't fire in that case because the container never changes size.
         const settleTimer = setTimeout(() => {
-          if (!disposed) fitAddon.fit()
+          if (!disposed) fitTerminal()
         }, 500)
 
         // Connect to PTY via IPC
@@ -124,7 +147,6 @@ export function TerminalPanel({ ptyId, active }: Props) {
         })
 
         termRef.current = term
-        fitAddonRef.current = fitAddon
 
         cleanup = () => {
           resizeObserver.disconnect()
@@ -150,7 +172,7 @@ export function TerminalPanel({ ptyId, active }: Props) {
       cleanup?.()
       cleanup = null
       termRef.current = null
-      fitAddonRef.current = null
+      fitFnRef.current = null
     }
   }, [ptyId])
 
@@ -160,7 +182,7 @@ export function TerminalPanel({ ptyId, active }: Props) {
     if (!term) return
     try {
       term.setOption('fontSize', terminalFontSize)
-      fitAddonRef.current?.fit()
+      fitFnRef.current?.()
     } catch {
       // ghostty-web may not support setOption — font applies on next terminal create
     }
@@ -171,7 +193,7 @@ export function TerminalPanel({ ptyId, active }: Props) {
     if (!active || !termRef.current) return
 
     // Terminals keep real dimensions via visibility:hidden, so fit is reliable
-    fitAddonRef.current?.fit()
+    fitFnRef.current?.()
     termRef.current?.focus()
   }, [active])
 
