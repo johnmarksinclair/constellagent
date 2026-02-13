@@ -186,7 +186,7 @@ export function Sidebar() {
   const workspaces = useAppStore((s) => s.workspaces);
   const activeWorkspaceId = useAppStore((s) => s.activeWorkspaceId);
   const setActiveWorkspace = useAppStore((s) => s.setActiveWorkspace);
-  const addProject = useAppStore((s) => s.addProject);
+  const addProjectWithRootWorkspace = useAppStore((s) => s.addProjectWithRootWorkspace);
   const addWorkspace = useAppStore((s) => s.addWorkspace);
   const addTab = useAppStore((s) => s.addTab);
   const addToast = useAppStore((s) => s.addToast);
@@ -266,8 +266,8 @@ export function Sidebar() {
 
     const name = dirPath.split("/").pop() || dirPath;
     const id = crypto.randomUUID();
-    addProject({ id, name, repoPath: dirPath });
-  }, [addProject]);
+    addProjectWithRootWorkspace({ id, name, repoPath: dirPath });
+  }, [addProjectWithRootWorkspace]);
 
   const finishCreateWorkspace = useCallback(
     async (
@@ -417,8 +417,9 @@ export function Sidebar() {
   );
 
   const handleDeleteWorkspace = useCallback(
-    (e: React.MouseEvent, ws: { id: string; name: string }) => {
+    (e: React.MouseEvent, ws: { id: string; name: string; isRoot?: boolean }) => {
       e.stopPropagation();
+      if (ws.isRoot) return;
       if (e.shiftKey) {
         deleteWorkspace(ws.id);
         return;
@@ -440,12 +441,12 @@ export function Sidebar() {
   const handleDeleteProject = useCallback(
     (e: React.MouseEvent, project: Project) => {
       e.stopPropagation();
-      const wsCount = workspaces.filter(
-        (w) => w.projectId === project.id,
+      const worktreeCount = workspaces.filter(
+        (w) => w.projectId === project.id && !w.isRoot,
       ).length;
       showConfirmDialog({
         title: "Delete Project",
-        message: `Delete project "${project.name}"${wsCount > 0 ? ` and its ${wsCount} workspace${wsCount > 1 ? "s" : ""}` : ""}? This will remove all git worktrees from disk.`,
+        message: `Delete project "${project.name}"${worktreeCount > 0 ? ` and its ${worktreeCount} worktree workspace${worktreeCount > 1 ? "s" : ""}` : ""}? This will remove all git worktrees from disk.`,
         confirmLabel: "Delete",
         destructive: true,
         onConfirm: () => {
@@ -478,9 +479,9 @@ export function Sidebar() {
 
         {projects.map((project) => {
           const isExpanded = isProjectExpanded(project.id);
-          const projectWorkspaces = workspaces.filter(
-            (w) => w.projectId === project.id,
-          );
+          const projectWorkspaces = workspaces
+            .filter((w) => w.projectId === project.id)
+            .sort((a, b) => (a.isRoot ? -1 : b.isRoot ? 1 : 0));
 
           return (
             <div key={project.id} className={styles.projectSection}>
@@ -529,7 +530,7 @@ export function Sidebar() {
                         key={ws.id}
                         className={`${styles.workspaceItem} ${
                           ws.id === activeWorkspaceId ? styles.active : ""
-                        } ${unreadWorkspaceIds.has(ws.id) ? styles.unread : ""} ${activeClaudeWorkspaceIds.has(ws.id) ? styles.claudeActive : ""}`}
+                        } ${unreadWorkspaceIds.has(ws.id) ? styles.unread : ""} ${activeClaudeWorkspaceIds.has(ws.id) ? styles.claudeActive : ""} ${ws.isRoot ? styles.rootWorkspace : ""}`}
                         onClick={() =>
                           !isEditing && handleSelectWorkspace(ws.id)
                         }
@@ -539,7 +540,7 @@ export function Sidebar() {
                         }}
                       >
                         <span className={styles.workspaceIcon}>
-                          {ws.automationId ? "⏱" : "⌥"}
+                          {ws.isRoot ? "~" : ws.automationId ? "⏱" : "⌥"}
                         </span>
                         <div className={styles.workspaceNameCol}>
                           {isEditing ? (
@@ -580,14 +581,16 @@ export function Sidebar() {
                             showBranch={!!showMeta}
                           />
                         </div>
-                        <Tooltip label="Delete workspace">
-                          <button
-                            className={styles.deleteBtn}
-                            onClick={(e) => handleDeleteWorkspace(e, ws)}
-                          >
-                            ✕
-                          </button>
-                        </Tooltip>
+                        {!ws.isRoot && (
+                          <Tooltip label="Delete workspace">
+                            <button
+                              className={styles.deleteBtn}
+                              onClick={(e) => handleDeleteWorkspace(e, ws)}
+                            >
+                              ✕
+                            </button>
+                          </Tooltip>
+                        )}
                       </div>
                     );
                   })}
