@@ -31,6 +31,7 @@ export interface Workspace {
   worktreePath: string
   projectId: string
   automationId?: string
+  isRoot?: boolean
 }
 
 export type Tab = {
@@ -109,6 +110,7 @@ export interface AppState {
 
   // Actions
   addProject: (project: Project) => void
+  addProjectWithRootWorkspace: (project: Project) => Promise<void>
   removeProject: (id: string) => void
   addWorkspace: (workspace: Workspace) => void
   removeWorkspace: (id: string) => void
