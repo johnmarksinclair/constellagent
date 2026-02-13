@@ -459,8 +459,6 @@
     (() => {
       const repo = 'owengretzinger/constellagent';
       const repoUrl = 'https://api.github.com/repos/' + repo;
-      const params = new URLSearchParams(window.location.search || '');
-      const isScreenshotMode = params.has('screenshot') || params.has('share');
 
       const statTotal = document.getElementById('totalCount');
       const dateSpan = document.getElementById('dateSpan');
@@ -469,7 +467,7 @@
       const fallback = document.getElementById('chartFallback');
       const chartState = document.getElementById('chartState');
       const ctx = chartCanvas.getContext('2d');
-      const apiTimeoutMs = isScreenshotMode ? 1200 : 8000;
+      const apiTimeoutMs = 8000;
 
       const fmt = (n) => new Intl.NumberFormat('en-US').format(n);
       const shortDate = (d) => {
@@ -492,73 +490,6 @@
           clearTimeout(timeout);
         }
       };
-
-      function pseudoRandom(seed) {
-        let value = seed;
-        return () => {
-          value = (value * 1664525 + 1013904223) >>> 0;
-          return value / 0xffffffff;
-        };
-      }
-
-      function buildDemoStarEvents() {
-        const events = [];
-        const rand = pseudoRandom(1337);
-        const days = isScreenshotMode ? 390 : 180;
-        const now = new Date();
-        const start = new Date(now.getTime());
-        start.setDate(start.getDate() - days);
-        let total = 0;
-
-        for (let day = 0; day <= days; day += 1) {
-          const date = new Date(start.getTime());
-          date.setDate(start.getDate() + day);
-          const dailyFloor = Math.floor(rand() * 5);
-          const dailyCount = Math.max(0, 1 + ((day * 3 + dailyFloor) % 4));
-          for (let i = 0; i < dailyCount; i += 1) {
-            const eventDate = new Date(date.getTime());
-            eventDate.setHours((8 + ((day + i) % 12)), ((i * 11) % 60), 0, 0);
-            events.push({ starredAt: eventDate });
-            total += 1;
-          }
-        }
-
-        return { events, total, startDate: start, endDate: now };
-      }
-
-      function renderDemoState() {
-        const demo = buildDemoStarEvents();
-        const timeline = buildTimeline(demo.events);
-        const total = demo.total;
-        const now = new Date();
-
-        animateValue(statTotal, total);
-        dateSpan.textContent = 'As of ' + shortDate(demo.endDate);
-        drawTimeline(timeline);
-        fallback.classList.remove('visible');
-        clearState();
-        updatedAt.textContent = 'Synced: ' + now.toLocaleString();
-        updatedAt.setAttribute('datetime', now.toISOString());
-        return timeline;
-      }
-
-      function renderFallbackDemoData(sourceLabel = 'Fallback', chartOnly = false) {
-        const demo = buildDemoStarEvents();
-        const timeline = buildTimeline(demo.events);
-        if (!chartOnly) {
-          statTotal.textContent = demo.total.toString();
-          dateSpan.textContent = 'As of ' + shortDate(demo.endDate);
-          animateValue(statTotal, demo.total);
-          const now = new Date();
-          updatedAt.textContent = 'Synced: ' + now.toLocaleString();
-          updatedAt.setAttribute('datetime', now.toISOString());
-        }
-        drawTimeline(timeline);
-        setError('Using fallback chart (' + sourceLabel + ' data source unavailable).');
-        chartState.classList.remove('error');
-        clearState();
-        return { events: demo.events, total: demo.total };
-      }
 
       function setError(msg) {
         chartState.textContent = msg;
@@ -749,35 +680,12 @@
       }
 
       async function init() {
-        let forceFallbackTimer;
+        let repoMeta = null;
         try {
-          if (isScreenshotMode) {
-            const demoTimeline = renderDemoState();
-            drawTimeline(demoTimeline);
-            return;
-          }
-
-          forceFallbackTimer = window.setTimeout(() => {
-            renderFallbackDemoData('Fallback');
-          }, 2200);
-
           const now = new Date();
-          const [repoMeta, starred] = await Promise.all([
-            Promise.race([
-              loadRepoMeta(),
-              new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('GitHub API timeout')), 10000);
-              }),
-            ]),
-            Promise.race([
-              loadStargazers(),
-              new Promise((_, reject) => {
-                setTimeout(() => reject(new Error('GitHub API timeout')), 10000);
-              }),
-            ]),
-          ]);
+          repoMeta = await loadRepoMeta();
+          const starred = await loadStargazers();
           const total = typeof repoMeta.stargazers_count === 'number' ? repoMeta.stargazers_count : starred.length;
-          if (forceFallbackTimer) window.clearTimeout(forceFallbackTimer);
           statTotal.textContent = total.toString();
           animateValue(statTotal, total);
           const until = starred[starred.length - 1]?.starredAt;
@@ -795,8 +703,17 @@
           updatedAt.textContent = 'Synced: ' + now.toLocaleString();
           updatedAt.setAttribute('datetime', now.toISOString());
         } catch (error) {
-          if (forceFallbackTimer) window.clearTimeout(forceFallbackTimer);
-          renderFallbackDemoData('Fallback');
+          if (repoMeta && typeof repoMeta.stargazers_count === 'number') {
+            statTotal.textContent = fmt(repoMeta.stargazers_count);
+            dateSpan.textContent = 'Live chart unavailable';
+          } else {
+            statTotal.textContent = '—';
+            dateSpan.textContent = 'Live data unavailable';
+          }
+          setError('Live GitHub data unavailable. Showing fallback chart image.');
+          const now = new Date();
+          updatedAt.textContent = 'Sync failed: ' + now.toLocaleString();
+          updatedAt.setAttribute('datetime', now.toISOString());
           console.error(error);
         }
       }
