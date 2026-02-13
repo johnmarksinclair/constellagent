@@ -133,11 +133,24 @@ export class GitService {
   }
 
   static async getDefaultBranch(repoPath: string): Promise<string> {
-    // Sync origin/HEAD with what the remote reports as default
-    await git(['remote', 'set-head', 'origin', '--auto'], repoPath)
-    const ref = await git(['symbolic-ref', 'refs/remotes/origin/HEAD'], repoPath)
+    // Best effort sync of origin/HEAD. Network hiccups should not block worktree creation.
+    await git(['remote', 'set-head', 'origin', '--auto'], repoPath).catch(() => {})
+
+    const ref = await git(['symbolic-ref', 'refs/remotes/origin/HEAD'], repoPath).catch(() => '')
     // "refs/remotes/origin/main" → "origin/main"
-    return ref.replace('refs/remotes/', '')
+    if (ref) return ref.replace('refs/remotes/', '')
+
+    // Fallback for repos where origin/HEAD is unset.
+    for (const candidate of ['origin/main', 'origin/master']) {
+      const exists = await git(['rev-parse', '--verify', `refs/remotes/${candidate}`], repoPath)
+        .then(() => true, () => false)
+      if (exists) return candidate
+    }
+
+    const local = await git(['rev-parse', '--abbrev-ref', 'HEAD'], repoPath).catch(() => '')
+    if (local && local !== 'HEAD') return local.startsWith('origin/') ? local : `origin/${local}`
+
+    return 'origin/main'
   }
 
   static async createWorktree(
@@ -149,7 +162,8 @@ export class GitService {
     force = false,
     onProgress?: CreateWorktreeProgressReporter
   ): Promise<string> {
-    branch = GitService.sanitizeBranchName(branch)
+    const requestedBranch = branch.trim()
+    branch = GitService.sanitizeBranchName(requestedBranch)
     if (!branch) throw new Error('Branch name is empty after sanitization')
 
     const parentDir = dirname(repoPath)
@@ -205,11 +219,23 @@ export class GitService {
         .then(() => true, () => false)
       if (!remoteExists) {
         try {
-          const { stdout } = await execFileAsync('gh', [
-            'pr', 'list', '--repo', '.', '--head', branch, '--json', 'number',
-            '--jq', '.[0].number',
-          ], { cwd: repoPath })
-          const prNumber = stdout.trim()
+          const headCandidates = [requestedBranch]
+          if (requestedBranch.includes(':')) {
+            const prBranch = requestedBranch.split(':')[1]
+            if (prBranch && !headCandidates.includes(prBranch)) headCandidates.push(prBranch)
+          }
+          if (!headCandidates.includes(branch)) headCandidates.push(branch)
+
+          let prNumber = ''
+          for (const headCandidate of headCandidates) {
+            const { stdout } = await execFileAsync('gh', [
+              // Resolve repo from cwd for broad gh CLI compatibility.
+              'pr', 'list', '--head', headCandidate, '--json', 'number',
+              '--jq', '.[0].number',
+            ], { cwd: repoPath })
+            prNumber = stdout.trim()
+            if (prNumber) break
+          }
           if (prNumber) {
             await git(['fetch', 'origin', `pull/${prNumber}/head:${branch}`], repoPath)
             branchExists = true
